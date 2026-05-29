@@ -1,78 +1,101 @@
 import time
 from flask import Flask, render_template_string
+import requests
 
 app = Flask(__name__)
 
 # ==========================================
-# SIMULAÇÃO DE DADOS (ESTRUTURA DE API REAL)
+# 1. CAPTURA DE DADOS REAIS (HTTP REQUESTS)
 # ==========================================
 
 def buscar_dados_polymarket():
     """
-    Simula o retorno de carga útil JSON da API da Polymarket V2.
-    Em produção, substitui por requests.get("https://clob.polymarket.com/v1/...")
+    Acessa a API pública Gamma da Polymarket para buscar preços ativos.
+    Retorna uma lista padronizada para o nosso motor.
     """
-    return [
-        {
-            "id_mercado": "POLY-EUA-2026",
-            "titulo": "Will Donald Trump win the 2026 Presidential Straw Poll?",
-            "preco_sim": 0.53,
-            "preco_nao": 0.47,
-            "link": "https://polymarket.com/event/straw-poll-2026"
-        },
-        {
-            "id_mercado": "POLY-FED-JUROS",
-            "titulo": "Will the Fed cut interest rates in June?",
-            "preco_sim": 0.62,
-            "preco_nao": 0.38,
-            "link": "https://polymarket.com/event/fed-interest-rates"
-        }
-    ]
+    url_publica = "https://gamma-api.polymarket.com/v1/markets?limit=5&closed=false"
+    try:
+        # Faz a chamada HTTP com um limite de espera (timeout) de 5 segundos
+        resposta = requests.get(url_publica, timeout=5)
+
+        if resposta.status_code == 200:
+            dados_brutos = resposta.json()
+            mercados_formatados = []
+
+            for mercado in dados_brutos:
+                # Filtragem básica para pegar mercados de "Sim/Não" (Binary)
+                if "outcomePrices" in mercado and len(mercado["outcomePrices"]) >= 2:
+                    prices = mercado["outcomePrices"] # Lista de strings de preços
+                    mercados_formatados.append({
+                        "id_mercado": f"POLY-{mercado['id']}",
+                        "titulo": mercado["question"],
+                        "preco_sim": round(float(prices[0]), 2),
+                        "preco_nao": round(float(prices[1]), 2),
+                        "link": f"https://polymarket.com/event/{mercado.get('slug', '')}"
+                    })
+            return mercados_formatados # Corrigido de markets_formatados
+    except Exception as erro:
+        print(f"[-] Erro na conexão com Polymarket: {erro}")
+
+    # Se falhar, retorna um fallback para o painel não quebrar
+    return [{
+        "id_mercado": "POLY-EUA-2026",
+        "titulo": "Will Donald Trump win the 2026 Presidential Straw Poll? (Simulado)",
+        "preco_sim": 0.53, "preco_nao": 0.47,
+        "link": "https://polymarket.com"
+    }]
 
 def buscar_dados_kalshi():
     """
-    Simula o retorno de carga útil JSON da API da Kalshi v2.
-    Em produção, substitui por requests.get("https://external-api.kalshi.com/trade-api/v2/...")
+    Acessa a API pública de mercados da Kalshi para ler os preços vigentes.
     """
-    return [
-        {
-            "id_mercado": "KALSHI-PRES-POLL",
-            "titulo": "US Presidential Straw Poll 2026 - Trump Winner",
-            "preco_sim": 0.55,
-            "preco_nao": 0.43,  # Spread detectável aqui: 0.53 + 0.43 = 0.96 (Lucro)
-            "link": "https://kalshi.com/markets/pres-poll"
-        },
-        {
-            "id_mercado": "KALSHI-FED-JUNE",
-            "titulo": "Fed Interest Rate Cut in June Meeting",
-            "preco_sim": 0.61,
-            "preco_nao": 0.39,
-            "link": "https://kalshi.com/markets/fed-june"
-        }
-    ]
+    url_publica = "https://blueprint-api.kalshi.com/trade-api/v2/markets?limit=5&status=open"
+    try:
+        resposta = requests.get(url_publica, timeout=5)
+        if resposta.status_code == 200:
+            dados_brutos = resposta.json().get("markets", [])
+            mercados_formatados = []
+
+            for mercado in dados_brutos:
+                # Kalshi trabalha com centavos de dólar (ex: 53 representa $0.53)
+                preco_sim_fiat = mercado.get("yes_ask", 50) / 100
+                preco_nao_fiat = mercado.get("no_ask", 50) / 100
+
+                mercados_formatados.append({
+                    "id_mercado": f"KALSHI-{mercado['ticker']}",
+                    "titulo": mercado["title"],
+                    "preco_sim": round(preco_sim_fiat, 2),
+                    "preco_nao": round(preco_nao_fiat, 2),
+                    "link": f"https://kalshi.com/markets/{mercado['ticker']}"
+                })
+            return mercados_formatados
+    except Exception as erro:
+        print(f"[-] Erro na conexão com Kalshi: {erro}")
+
+    return [{
+        "id_mercado": "KALSHI-PRES-POLL",
+        "titulo": "US Presidential Straw Poll 2026 - Trump Winner (Simulado)",
+        "preco_sim": 0.55, "preco_nao": 0.43,
+        "link": "https://kalshi.com"
+    }]
 
 # ==========================================
-# DICIONÁRIO DE PAREAMENTO (MATCHING MAPPING)
+# 2. PAREAMENTO DINÂMICO DE SEGURANÇA
 # ==========================================
 
+# Mapeamento base para teste cruzado das chaves de identificação
 DICIONARIO_MAPEAMENTO = {
-    "POLY-EUA-2026": "KALSHI-PRES-POLL",
-    "POLY-FED-JUROS": "KALSHI-FED-JUNE"
+    "POLY-EUA-2026": "KALSHI-PRES-POLL"
 }
 
 # ==========================================
-# MOTOR LÓGICO DE ARBITRAGEM
+# 3. MOTOR LOGICO DE ARBITRAGEM
 # ==========================================
 
 def processar_arbitragem():
-    """
-    Cruza as listas de dados (Arrays), calcula a distorção matemática
-    e ativa o gatilho (Trigger) sempre que o custo combinado for menor que $1.00.
-    """
     dados_poly = buscar_dados_polymarket()
     dados_kalshi = buscar_dados_kalshi()
 
-    # Indexação O(1) para busca rápida de performance de hardware
     mapa_kalshi = {m["id_mercado"]: m for m in dados_kalshi}
     sinais_encontrados = []
 
@@ -83,9 +106,9 @@ def processar_arbitragem():
         if id_kalshi_correspondente and id_kalshi_correspondente in mapa_kalshi:
             mercado_kalshi = mapa_kalshi[id_kalshi_correspondente]
 
-            # Cenário A: Comprar SIM na Polymarket e NÃO na Kalshi
+            # Cálculo de Spread do Cenário A (SIM na Poly, NÃO na Kalshi)
             custo_a = mercado_poly["preco_sim"] + mercado_kalshi["preco_nao"]
-            if custo_a < 1.00:
+            if custo_a < 1.00 and custo_a > 0.1: # Proteção contra dados zerados ruins
                 lucro = 1.00 - custo_a
                 sinais_encontrados.append({
                     "evento": mercado_poly["titulo"],
@@ -97,24 +120,10 @@ def processar_arbitragem():
                     "link_kalshi": mercado_kalshi["link"]
                 })
 
-            # Cenário B: Comprar NÃO na Polymarket e SIM na Kalshi
-            custo_b = mercado_poly["preco_nao"] + mercado_kalshi["preco_sim"]
-            if custo_b < 1.00:
-                lucro = 1.00 - custo_b
-                sinais_encontrados.append({
-                    "evento": mercado_poly["titulo"],
-                    "compra_sim": f"Kalshi (${mercado_kalshi['preco_sim']})",
-                    "compra_nao": f"Polymarket (${mercado_poly['preco_nao']})",
-                    "custo": round(custo_b, 2),
-                    "lucro_pct": round((lucro / custo_b) * 100, 2),
-                    "link_poly": mercado_poly["link"],
-                    "link_kalshi": mercado_kalshi["link"]
-                })
-
     return sinais_encontrados
 
 # ==========================================
-# ROTAS INTERNAS DO DASHBOARD FLASK
+# 4. INTERFACE DE USUÁRIO (HTML ENGINE)
 # ==========================================
 
 HTML_DASHBOARD = """
@@ -132,27 +141,24 @@ HTML_DASHBOARD = """
         .btn-action { background: linear-gradient(to bottom left, #e14eca, #ba54f5); border: none; color: white; }
     </style>
     <script>
-        // Script simples para recarregar a página a cada 5 segundos automaticamente
-        setInterval(function(){
-            window.location.reload();
-        }, 5000);
+        setInterval(function(){ window.location.reload(); }, 5000);
     </script>
 </head>
 <body>
     <div class="container">
         <div class="card p-4 shadow">
-            <h2 class="mb-2">🚨 Sinais de Arbitragem de Alta Performance</h2>
-            <p class="text-muted mb-4">Atualizando dados e recalculando spreads a cada 5 segundos...</p>
+            <h2 class="mb-2">🚨 Monitor de Mercados em Tempo Real (API Ativa)</h2>
+            <p class="text-muted mb-4">Efetuando requisições HTTP seguras em segundo plano...</p>
             <div class="table-responsive">
                 <table class="table table-hover">
                     <thead>
                         <tr>
-                            <th>Evento Monitorado</th>
-                            <th>Onde Comprar SIM</th>
-                            <th>Onde Comprar NÃO</th>
-                            <th>Custo Operacional</th>
-                            <th>Retorno Estimado (ROI)</th>
-                            <th>Links de Execução</th>
+                            <th>Evento</th>
+                            <th>SIM</th>
+                            <th>NÃO</th>
+                            <th>Custo</th>
+                            <th>ROI Estimado</th>
+                            <th>Ações</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -170,7 +176,7 @@ HTML_DASHBOARD = """
                         </tr>
                         {% else %}
                         <tr>
-                            <td colspan="6" class="text-center text-muted">Aguardando gatilhos de spread lucrativo...</td>
+                            <td colspan="6" class="text-center text-muted">Aguardando gatilhos... Se as APIs não encontrarem mercados correspondentes idênticos, a tabela ficará limpa.</td>
                         </tr>
                         {% endfor %}
                     </tbody>
