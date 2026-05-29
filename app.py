@@ -6,16 +6,38 @@ from difflib import SequenceMatcher
 app = Flask(__name__)
 
 # ==========================================
-# 1. CAPTURA DE DADOS REAIS VIA API
+# 1. NORMALIZADOR E LIMPEZA DE TEXTO
+# ==========================================
+
+def limpar_titulo(texto):
+    """
+    Remove pontuações e palavras acessórias comuns para isolar os
+    termos chave do mercado, otimizando a taxa de acerto do difflib.
+    """
+    termo_minusculo = texto.lower()
+    # Lista de stop-words frequentes em mercados preditivos em inglês
+    palavras_ruido = ["will", "the", "win", "is", "a", "in", "on", "at", "to", "be", "by", "of", "for", "meeting", "presidential"]
+
+    # Remove pontuações básicas
+    for caractere in ["?", "!", ".", ",", "-", '"', "'"]:
+        termo_minusculo = termo_minusculo.replace(caractere, " ")
+
+    # Filtra as palavras ruído
+    palavras_filtradas = [palavra for palavra in termo_minusculo.split() if palavra not in palavras_ruido]
+    return " ".join(palavras_filtradas)
+
+# ==========================================
+# 2. CAPTURA EM LARGA ESCALA (REDE EXPANDIDA)
 # ==========================================
 
 def buscar_dados_polymarket():
     """
-    Acessa a API pública Gamma da Polymarket para buscar preços ativos.
+    Consome até 100 mercados abertos e ativos na API pública da Polymarket.
     """
-    url_publica = "https://gamma-api.polymarket.com/v1/markets?limit=10&closed=false"
+    # Expansão de rede: limite aumentado para 100 mercados ativos
+    url_publica = "https://gamma-api.polymarket.com/v1/markets?limit=100&closed=false&active=true"
     try:
-        resposta = requests.get(url_publica, timeout=5)
+        resposta = requests.get(url_publica, timeout=6)
         if resposta.status_code == 200:
             dados_brutos = resposta.json()
             mercados_formatados = []
@@ -32,9 +54,9 @@ def buscar_dados_polymarket():
                     })
             return mercados_formatados
     except Exception as erro:
-        print(f"[-] Erro na conexão com Polymarket: {erro}")
+        print(f"[-] Erro na conexão dinâmica Polymarket: {erro}")
 
-    # Fallback de segurança para testes locais offline
+    # Fallback de contingência estrutural
     return [{
         "id_mercado": "POLY-EUA-2026",
         "titulo": "Will Donald Trump win the 2026 Presidential Straw Poll?",
@@ -44,12 +66,12 @@ def buscar_dados_polymarket():
 
 def buscar_dados_kalshi():
     """
-    Acessa a API pública de mercados da Kalshi para ler os preços vigentes.
+    Consome até 100 mercados ativos diretamente do endpoint de produção da Kalshi.
     """
-    # CORREÇÃO: Alterado para o endpoint oficial de produção recomendado pela plataforma
-    url_publica = "https://external-api.kalshi.com/trade-api/v2/markets?limit=10&status=open"
+    # Expansão de rede: limite aumentado para 100 mercados abertos
+    url_publica = "https://external-api.kalshi.com/trade-api/v2/markets?limit=100&status=open"
     try:
-        resposta = requests.get(url_publica, timeout=5)
+        resposta = requests.get(url_publica, timeout=6)
         if resposta.status_code == 200:
             dados_brutos = resposta.json().get("markets", [])
             mercados_formatados = []
@@ -67,7 +89,7 @@ def buscar_dados_kalshi():
                 })
             return mercados_formatados
     except Exception as erro:
-        print(f"[-] Erro na conexão com Kalshi: {erro}")
+        print(f"[-] Erro na conexão dinâmica Kalshi: {erro}")
 
     return [{
         "id_mercado": "KALSHI-PRES-POLL",
@@ -77,49 +99,36 @@ def buscar_dados_kalshi():
     }]
 
 # ==========================================
-# 2. MOTOR DE CORRESPONDÊNCIA DINÂMICA
+# 3. MOTOR DE CORRESPONDÊNCIA E ARBITRAGEM
 # ==========================================
 
 def calcular_similaridade(texto1, texto2):
-    """
-    Calcula a proximidade textual entre duas strings.
-    Converte para minúsculas para evitar falhas com letras maiúsculas.
-    """
-    return SequenceMatcher(None, texto1.lower(), texto2.lower()).ratio()
-
-# ==========================================
-# 3. MOTOR LÓGICO DE ARBITRAGEM
-# ==========================================
+    t1_limpo = limpar_titulo(texto1)
+    t2_limpo = limpar_titulo(texto2)
+    return SequenceMatcher(None, t1_limpo, t2_limpo).ratio()
 
 def processar_arbitragem():
-    """
-    Cruza as listas de dados dinamicamente usando a inteligência de proximidade textual.
-    """
     dados_poly = buscar_dados_polymarket()
     dados_kalshi = buscar_dados_kalshi()
     sinais_encontrados = []
 
-    # Define a margem mínima de similaridade aceitável (50% de compatibilidade)
-    CORTE_SIMILARIDADE = 0.50
+    # Corte calibrado: acima de 55% de similaridade limpa indica equivalência segura
+    CORTE_SIMILARIDADE = 0.55
 
     for mercado_poly in dados_poly:
         melhor_match = None
         maior_score = 0.0
 
-        # Varre todos os mercados da Kalshi procurando o correspondente ideal
         for mercado_kalshi in dados_kalshi:
             score = calcular_similaridade(mercado_poly["titulo"], mercado_kalshi["titulo"])
-
             if score > maior_score and score >= CORTE_SIMILARIDADE:
                 maior_score = score
                 melhor_match = mercado_kalshi
 
-        # Se encontrar uma linha correspondente confiável, calcula a arbitragem
         if melhor_match:
-            # Cenário A: Comprar SIM na Polymarket e NÃO na Kalshi
+            # Análise do Cenário A: Comprar SIM na Poly e NÃO na Kalshi
             custo_a = mercado_poly["preco_sim"] + melhor_match["preco_nao"]
-
-            if custo_a < 1.00 and custo_a > 0.1:
+            if custo_a < 1.00 and custo_a > 0.15:
                 lucro = 1.00 - custo_a
                 sinais_encontrados.append({
                     "evento_poly": mercado_poly["titulo"],
@@ -133,10 +142,9 @@ def processar_arbitragem():
                     "confianca": round(maior_score * 100, 1)
                 })
 
-            # Cenário B: Comprar NÃO na Polymarket e SIM na Kalshi
+            # Análise do Cenário B: Comprar NÃO na Poly e SIM na Kalshi
             custo_b = mercado_poly["preco_nao"] + melhor_match["preco_sim"]
-
-            if custo_b < 1.00 and custo_b > 0.1:
+            if custo_b < 1.00 and custo_b > 0.15:
                 lucro = 1.00 - custo_b
                 sinais_encontrados.append({
                     "evento_poly": mercado_poly["titulo"],
@@ -153,7 +161,7 @@ def processar_arbitragem():
     return sinais_encontrados
 
 # ==========================================
-# 4. INTERFACE DE USUÁRIO (DASHBOARD ENGINE)
+# 4. DASHBOARD INTERFACE (RENDER ENGINE)
 # ==========================================
 
 HTML_DASHBOARD = """
@@ -161,16 +169,18 @@ HTML_DASHBOARD = """
 <html lang="pt-br">
 <head>
     <meta charset="UTF-8">
-    <title>Painel de Arbitragem Inteligente</title>
+    <title>Enterprise Arbitrage Monitor</title>
     <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
     <style>
-        body { background-color: #1a1f3c; color: #ffffff; font-family: sans-serif; }
-        .card { background-color: #27293d; border: none; border-radius: 8px; margin-top: 40px; }
-        .table { color: #ffffff; }
-        .badge-lucro { background-color: #00f2c4; color: #1d8cf8; font-weight: bold; }
-        .badge-confianca { background-color: #2575fc; color: white; }
-        .btn-action { background: linear-gradient(to bottom left, #e14eca, #ba54f5); border: none; color: white; }
-        .small-text { font-size: 0.85rem; color: #a9a9b9; }
+        body { background-color: #111424; color: #ffffff; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+        .card { background-color: #1e213a; border: none; border-radius: 12px; margin-top: 40px; box-shadow: 0 8px 24px rgba(0,0,0,0.3); }
+        .table { color: #e2e8f0; }
+        .table-hover tbody tr:hover { background-color: #272a4a; }
+        .badge-lucro { background-color: #02f1c3; color: #0f172a; font-weight: bold; font-size: 0.9rem; }
+        .badge-confianca { background-color: #3b82f6; color: white; }
+        .btn-action { background: linear-gradient(135deg, #e14eca 0%, #ba54f5 100%); border: none; color: white; font-weight: 500; }
+        .btn-action:hover { opacity: 0.9; color: white; }
+        .small-text { font-size: 0.85rem; color: #94a3b8; }
     </style>
     <script>
         setInterval(function(){ window.location.reload(); }, 5000);
@@ -178,42 +188,52 @@ HTML_DASHBOARD = """
 </head>
 <body>
     <div class="container-fluid px-5">
-        <div class="card p-4 shadow">
-            <h2 class="mb-2">🚨 Monitor de Arbitragem com Pareamento Dinâmico</h2>
-            <p class="text-muted mb-4">Análise automática por Proximidade Textual ativa (Atualizando a cada 5s)...</p>
+        <div class="card p-4">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <div>
+                    <h2 class="m-0 font-weight-bold text-white">🚨 Monitor Scaler: Polymarket & Kalshi</h2>
+                    <p class="text-muted m-0 mt-1">Varredura de 200 mercados simultâneos com filtragem de stop-words ativa.</p>
+                </div>
+                <div class="text-right">
+                    <span class="badge badge-secondary p-2">Refresh: 5s</span>
+                </div>
+            </div>
             <div class="table-responsive">
-                <table class="table table-hover">
+                <table class="table table-borderless mt-2">
                     <thead>
-                        <tr>
-                            <th>Mercados Cruzados (Poly vs Kalshi)</th>
-                            <th>Confiança Match</th>
-                            <th>Comprar SIM</th>
-                            <th>Comprar NÃO</th>
-                            <th>Custo</th>
-                            <th>ROI Estimado</th>
-                            <th>Ações</th>
+                        <tr class="border-bottom border-secondary text-muted" style="font-size: 0.9rem;">
+                            <th>MERCADOS EQUIVALENTES DETECTADOS</th>
+                            <th>MATCH SCORE</th>
+                            <th>OPÇÃO COMPRA SIM</th>
+                            <th>OPÇÃO COMPRA NÃO</th>
+                            <th>CUSTO</th>
+                            <th>ROI ESTIMADO</th>
+                            <th>LINKS OFICIAIS</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for sinal in sinais %}
-                        <tr>
-                            <td>
-                                <div><span class="badge badge-info font-weight-light">Poly</span> {{ sinal.evento_poly }}</div>
-                                <div class="mt-1"><span class="badge badge-warning text-dark font-weight-light">Kalshi</span> <span class="small-text">{{ sinal.evento_kalshi }}</span></div>
+                        <tr class="border-bottom border-dark align-middle">
+                            <td class="py-3">
+                                <div><span class="badge badge-pill badge-info px-2 py-1 mr-2" style="font-size: 0.7rem;">POLY</span><strong>{{ sinal.evento_poly }}</strong></div>
+                                <div class="mt-2"><span class="badge badge-pill badge-warning text-dark px-2 py-1 mr-2" style="font-size: 0.7rem;">KALSHI</span><span class="small-text">{{ sinal.evento_kalshi }}</span></div>
                             </td>
-                            <td><span class="badge badge-confianca p-2">{{ sinal.confianca }}%</span></td>
-                            <td><span class="text-info">{{ sinal.compra_sim }}</span></td>
-                            <td><span class="text-warning">{{ sinal.compra_nao }}</span></td>
-                            <td>${{ sinal.custo }}</td>
-                            <td><span class="badge badge-lucro p-2">+{{ sinal.lucro_pct }}%</span></td>
-                            <td>
-                                <a href="{{ sinal.link_poly }}" target="_blank" class="btn btn-sm btn-action mr-1">Poly</a>
-                                <a href="{{ sinal.link_kalshi }}" target="_blank" class="btn btn-sm btn-secondary">Kalshi</a>
+                            <td class="align-middle"><span class="badge badge-confianca p-2">{{ sinal.confianca }}%</span></td>
+                            <td class="align-middle text-info">{{ sinal.compra_sim }}</td>
+                            <td class="align-middle text-warning">{{ sinal.compra_nao }}</td>
+                            <td class="align-middle font-weight-bold">${{ sinal.custo }}</td>
+                            <td class="align-middle"><span class="badge badge-lucro p-2">+{{ sinal.lucro_pct }}%</span></td>
+                            <td class="align-middle">
+                                <a href="{{ sinal.link_poly }}" target="_blank" class="btn btn-sm btn-action px-3 mr-1">Poly</a>
+                                <a href="{{ sinal.link_kalshi }}" target="_blank" class="btn btn-sm btn-secondary px-3">Kalshi</a>
                             </td>
                         </tr>
                         {% else %}
                         <tr>
-                            <td colspan="7" class="text-center text-muted">Aguardando gatilhos... O robô está varrendo e cruzando os tópicos das APIs abertas.</td>
+                            <td colspan="7" class="text-center text-muted py-5">
+                                <div class="spinner-border spinner-border-sm text-info mr-2" role="status"></div>
+                                Buscando distorções de preços em tempo real nos 200 maiores mercados...
+                            </td>
                         </tr>
                         {% endfor %}
                     </tbody>
