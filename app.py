@@ -55,14 +55,13 @@ def buscar_dados_kalshi():
 # DICIONÁRIO DE PAREAMENTO (MATCHING MAPPING)
 # ==========================================
 
-# Resolve o gargalo de nomes diferentes para o mesmo evento nas duas plataformas
 DICIONARIO_MAPEAMENTO = {
     "POLY-EUA-2026": "KALSHI-PRES-POLL",
     "POLY-FED-JUROS": "KALSHI-FED-JUNE"
 }
 
 # ==========================================
-# MOTOR LOGICO DE ARBITRAGEM
+# MOTOR LÓGICO DE ARBITRAGEM
 # ==========================================
 
 def processar_arbitragem():
@@ -132,11 +131,18 @@ HTML_DASHBOARD = """
         .badge-lucro { background-color: #00f2c4; color: #1d8cf8; font-weight: bold; }
         .btn-action { background: linear-gradient(to bottom left, #e14eca, #ba54f5); border: none; color: white; }
     </style>
+    <script>
+        // Script simples para recarregar a página a cada 5 segundos automaticamente
+        setInterval(function(){
+            window.location.reload();
+        }, 5000);
+    </script>
 </head>
 <body>
     <div class="container">
         <div class="card p-4 shadow">
-            <h2 class="mb-4">🚨 Sinais de Arbitragem de Alta Performance</h2>
+            <h2 class="mb-2">🚨 Sinais de Arbitragem de Alta Performance</h2>
+            <p class="text-muted mb-4">Atualizando dados e recalculando spreads a cada 5 segundos...</p>
             <div class="table-responsive">
                 <table class="table table-hover">
                     <thead>
@@ -182,5 +188,4 @@ def index():
     return render_template_string(HTML_DASHBOARD, sinais=sinais_ativos)
 
 if __name__ == '__main__':
-    # Roda localmente com recarga automática ativa para desenvolvimento
     app.run(debug=True, port=5000)
