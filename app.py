@@ -46,7 +46,8 @@ def buscar_dados_kalshi():
     """
     Acessa a API pública de mercados da Kalshi para ler os preços vigentes.
     """
-    url_publica = "https://api.kalshi.com/trade-api/v2/markets?limit=10&status=open"
+    # CORREÇÃO: Alterado para o endpoint oficial de produção recomendado pela plataforma
+    url_publica = "https://external-api.kalshi.com/trade-api/v2/markets?limit=10&status=open"
     try:
         resposta = requests.get(url_publica, timeout=5)
         if resposta.status_code == 200:
